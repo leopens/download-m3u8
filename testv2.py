@@ -1,4 +1,5 @@
-# 多线程
+# coding: utf-8
+# 增加断点续传功能
 import requests
 import os
 from tqdm import tqdm
@@ -51,9 +52,13 @@ def download_ts_segment(ts_url, output_dir):
         print(f"文件已存在: {ts_filepath}")
         return
 
-    with requests.get(ts_url, stream=True) as r:
-        if r.status_code == 200:
-            with open(ts_filepath, 'wb') as f:
+    resume_header = {}
+    if os.path.exists(ts_filepath):
+        resume_header['Range'] = f"bytes={os.path.getsize(ts_filepath)}-"
+
+    with requests.get(ts_url, headers=resume_header, stream=True) as r:
+        if r.status_code == 200 or r.status_code == 206:  # 206 indicates partial content
+            with open(ts_filepath, 'ab') as f:  # 'ab' to append in binary mode
                 for chunk in tqdm(r.iter_content(chunk_size=1024), desc=f"Downloading {ts_filename}", unit="B", leave=False):
                     f.write(chunk)
         else:
