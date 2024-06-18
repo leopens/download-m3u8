@@ -1,5 +1,6 @@
 import asyncio
 import os
+import hashlib
 from urllib.parse import urljoin
 import aiofiles
 import aiohttp
@@ -35,6 +36,7 @@ async def download_m3u8_recursive(session, url, output_dir):
     ts_list = []
 
     for line in m3u8_list:
+        line = line.rstrip('\r\n')
         if line.endswith('.m3u8'):
             print(f"正在重定向解析: {line}")
             nested_url = urljoin(url, line)
@@ -60,7 +62,7 @@ async def download_m3u8_recursive(session, url, output_dir):
     return download_success, ts_list
 
 async def download_ts_segment(session, ts_url, output_dir, progress_bar=None):
-    ts_filename = os.path.basename(ts_url)
+    ts_filename = hashlib.md5(ts_url.encode()).hexdigest() + ".ts"
     ts_filepath = os.path.join(output_dir, ts_filename)
 
     resume_header = {}
@@ -72,9 +74,6 @@ async def download_ts_segment(session, ts_url, output_dir, progress_bar=None):
 
     try:
         async with session.get(ts_url, headers=resume_header) as response:
-            #print(f"请求URL: {ts_url}")
-            #print(f"请求头部Range: {resume_header.get('Range')}")
-
             if response.status == 200 or response.status == 206:
                 total_size = int(response.headers.get('Content-Length', 0))
 
@@ -159,10 +158,12 @@ async def convert_ts_to_mp4(ts_dir, mp4_file_path, ts_list):
         print("播放列表为空，无法生成 MP4 文件")
         return False
 
+    ts_files = [os.path.join(ts_dir, hashlib.md5(ts_url.encode()).hexdigest() + ".ts") for ts_url in ts_list]
+
     # 构建 FFmpeg 命令
     ffmpeg_cmd = [
         'ffmpeg', '-loglevel', 'error',  # Suppress logs
-        '-i', 'concat:' + '|'.join([os.path.join(ts_dir, os.path.basename(ts_url)) for ts_url in ts_list]),
+        '-i', 'concat:' + '|'.join(ts_files),
         '-c', 'copy', mp4_file_path
     ]
 
@@ -176,7 +177,8 @@ async def convert_ts_to_mp4(ts_dir, mp4_file_path, ts_list):
         return False
 
 async def main():
-    url = 'https://v9.dious.cc/20231011/gSsDaQr1/index.m3u8'
+    url = 'https://v2.mzxay.com/202406/17/DZ85eYsTjY10/video/index.m3u8' 
+
     ts_output_dir = '/Users/duanqs/Downloads/m3u8/ts_files'
     mp4_file_path = '/Users/duanqs/Downloads/m3u8/video.mp4'
 
