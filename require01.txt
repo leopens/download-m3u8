@@ -1,0 +1,48 @@
+ex.m3u8	index.m3u8	
+第 3 项请求，共 89 项
+已传输 117 kB，共 29.5 MB
+所选资源大小为 119 kB，共 42.9 MB
+完成用时：3.9 分钟
+DOMContentLoaded：1.34 秒
+请求网址:
+https://v9.dious.cc/20231011/gSsDaQr1/index.m3u8
+请求方法:
+GET
+状态代码:
+200 OK
+远程地址:
+1.64.137.202:58991
+引荐来源网址政策:
+no-referrer
+
+
+HTTP/1.1 200 OK
+Server: Tengine
+Date: Tue, 18 Jun 2024 02:41:51 GMT
+Content-Type: application/vnd.apple.mpegURL
+Transfer-Encoding: chunked
+Connection: keep-alive
+X-Powered-By: Express
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Headers: X-Requested-With
+Access-Control-Allow-Methods: POST, GET, OPTIONS
+
+GET /20231011/gSsDaQr1/index.m3u8 HTTP/1.1
+Accept: */*
+Accept-Encoding: gzip, deflate, br, zstd
+Accept-Language: zh,en-US;q=0.9,en;q=0.8,zh-CN;q=0.7
+Connection: keep-alive
+Host: v9.dious.cc
+Origin: https://91mjw.tv
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: cross-site
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36
+sec-ch-ua: "Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "macOS"
+
+
+#EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=2000000,RESOLUTION=1920x1040
+/20231011/gSsDaQr1/2000kb/hls/index.m3u8
