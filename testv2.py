@@ -1,26 +1,28 @@
-import aiohttp
 import asyncio
 import os
-from tqdm import tqdm
 from urllib.parse import urljoin
 import aiofiles
+import aiohttp
+from tqdm import tqdm
+import subprocess
 
 async def download_m3u8_video(url, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
     async with aiohttp.ClientSession() as session:
-        if await download_m3u8_recursive(session, url, output_dir):
+        success, ts_list = await download_m3u8_recursive(session, url, output_dir)
+        if success:
             print('m3u8视频下载完成')
-            return True
+            return True, ts_list
         else:
-            return False
+            return False, []
 
 async def download_m3u8_recursive(session, url, output_dir):
     async with session.get(url) as response:
         if response.status != 200:
             print('m3u8视频下载链接无效')
-            return False
+            return False, []
 
         m3u8_content = await response.text()
 
@@ -39,14 +41,13 @@ async def download_m3u8_recursive(session, url, output_dir):
             ts_list.append(ts_url)
 
     print(f"解析到 {len(ts_list)} 个ts文件,准备下载.")
-    #ts_list=["https://v9.dious.cc/20231011/gSsDaQr1/2000kb/hls/MbDwKFz6.ts"]
+    ts_list=["https://v9.dious.cc/20231011/gSsDaQr1/2000kb/hls/MbDwKFz6.ts"]
     # 下载并行度优化
     download_tasks = [download_ts_segment(session, ts_url, output_dir) for ts_url in ts_list]
     download_results = await asyncio.gather(*download_tasks)
 
     download_success = all(download_results)
-    return download_success
-
+    return download_success, ts_list
 
 async def download_ts_segment(session, ts_url, output_dir):
     ts_filename = os.path.basename(ts_url)
@@ -73,7 +74,6 @@ async def download_ts_segment(session, ts_url, output_dir):
                             await f.write(chunk)
                             pbar.update(len(chunk))
             elif response.status == 416:
-                # Check if the local file size matches the expected Content-Length
                 local_file_size = os.path.getsize(ts_filepath)
                 #print(f"本地文件大小: {local_file_size}")
                 expected_size = int(response.headers.get('Content-Length', 0))
@@ -127,30 +127,36 @@ async def download_nested_m3u8(session, url):
 
     return ts_list
 
-def convert_ts_to_mp4(ts_dir, mp4_file_path):
-    ts_files = [f for f in os.listdir(ts_dir) if f.endswith('.ts')]
-    if not ts_files:
-        print(f"目录 {ts_dir} 中没有找到TS文件.")
+async def convert_ts_to_mp4(ts_dir, mp4_file_path, ts_list):
+    if not ts_list:
+        print("播放列表为空，无法生成 MP4 文件")
         return False
 
-    ts_files.sort()
-
-    with open(mp4_file_path, 'wb') as mp4_file:
-        for ts_file in ts_files:
-            ts_file_path = os.path.join(ts_dir, ts_file)
-            with open(ts_file_path, 'rb') as ts:
-                mp4_file.write(ts.read())
-
-    print(f"TS文件合并完成，输出到: {mp4_file_path}")
-    return True
+    # 构建 FFmpeg 命令
+    # 构建 FFmpeg 命令
+    ffmpeg_cmd = [
+        'ffmpeg', '-loglevel', 'error',  # Suppress logs
+        '-i', 'concat:' + '|'.join([os.path.join(ts_dir, os.path.basename(ts_url)) for ts_url in ts_list]),
+        '-c', 'copy', mp4_file_path
+    ]
+    
+    try:
+        # 执行 FFmpeg 命令
+        subprocess.run(ffmpeg_cmd, check=True)
+        print(f"MP4 转换完成，输出到: {mp4_file_path}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"转换到 MP4 失败: {e}")
+        return False
 
 async def main():
     url = 'https://v9.dious.cc/20231011/gSsDaQr1/index.m3u8'
     ts_output_dir = '/Users/duanqs/Downloads/m3u8/ts_files'
     mp4_file_path = '/Users/duanqs/Downloads/m3u8/video.mp4'
 
-    if await download_m3u8_video(url, ts_output_dir):
-        if convert_ts_to_mp4(ts_output_dir, mp4_file_path):
+    success, ts_list = await download_m3u8_video(url, ts_output_dir)
+    if success:
+        if await convert_ts_to_mp4(ts_output_dir, mp4_file_path, ts_list):
             print("MP4转换完成")
         else:
             print("转换到MP4失败，因为TS文件下载错误")
