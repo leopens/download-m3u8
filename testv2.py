@@ -1,21 +1,30 @@
-# coding: utf-8
-# 增加断点续传功能
-import requests
+import aiohttp
+import asyncio
 import os
 from tqdm import tqdm
 from urllib.parse import urljoin
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import aiofiles
 
-def download_m3u8_video(url, output_dir):
+async def download_m3u8_video(url, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    r = requests.get(url)
-    if r.status_code != 200:
-        print('m3u8视频下载链接无效')
-        return False
+    async with aiohttp.ClientSession() as session:
+        if await download_m3u8_recursive(session, url, output_dir):
+            print('m3u8视频下载完成')
+            return True
+        else:
+            return False
 
-    m3u8_list = r.text.split('\n')
+async def download_m3u8_recursive(session, url, output_dir):
+    async with session.get(url) as response:
+        if response.status != 200:
+            print('m3u8视频下载链接无效')
+            return False
+
+        m3u8_content = await response.text()
+
+    m3u8_list = m3u8_content.split('\n')
     m3u8_list = [i for i in m3u8_list if i and i[0] != '#']
     ts_list = []
 
@@ -23,7 +32,7 @@ def download_m3u8_video(url, output_dir):
         if line.endswith('.m3u8'):
             print(f"正在重定向解析: {line}")
             nested_url = urljoin(url, line)
-            nested_ts_list = download_nested_m3u8(nested_url)
+            nested_ts_list = await download_nested_m3u8(session, nested_url)
             ts_list.extend(nested_ts_list)
         else:
             ts_url = urljoin(url, line)
@@ -31,46 +40,69 @@ def download_m3u8_video(url, output_dir):
 
     print(f"解析到 {len(ts_list)} 个ts文件,准备下载.")
 
-    # 使用多线程下载
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_url = {executor.submit(download_ts_segment, ts_url, output_dir): ts_url for ts_url in ts_list}
-        for future in as_completed(future_to_url):
-            ts_url = future_to_url[future]
-            try:
-                future.result()
-            except Exception as exc:
-                print(f"下载 {ts_url} 时发生错误: {exc}")
+    # 下载并行度优化
+    download_tasks = [download_ts_segment(session, ts_url, output_dir) for ts_url in ts_list]
+    download_results = await asyncio.gather(*download_tasks)
 
-    print('m3u8视频下载完成')
-    return True
+    download_success = all(download_results)
+    return download_success
 
-def download_ts_segment(ts_url, output_dir):
+
+async def download_ts_segment(session, ts_url, output_dir):
     ts_filename = os.path.basename(ts_url)
     ts_filepath = os.path.join(output_dir, ts_filename)
 
-    if os.path.exists(ts_filepath):
-        print(f"文件已存在: {ts_filepath}")
-        return
-
     resume_header = {}
     if os.path.exists(ts_filepath):
+        print(f"正在继续下载断点文件: {ts_filename}")
         resume_header['Range'] = f"bytes={os.path.getsize(ts_filepath)}-"
 
-    with requests.get(ts_url, headers=resume_header, stream=True) as r:
-        if r.status_code == 200 or r.status_code == 206:  # 206 indicates partial content
-            with open(ts_filepath, 'ab') as f:  # 'ab' to append in binary mode
-                for chunk in tqdm(r.iter_content(chunk_size=1024), desc=f"Downloading {ts_filename}", unit="B", leave=False):
-                    f.write(chunk)
-        else:
-            print(f"下载失败: {ts_url}")
+    try:
+        async with session.get(ts_url, headers=resume_header) as response:
+            if response.status == 200 or response.status == 206:
+                total_size = int(response.headers.get('Content-Length', 0))
+                with tqdm(total=total_size, unit='B', unit_scale=True, desc=f'Downloading {ts_filename}') as pbar:
+                    async with aiofiles.open(ts_filepath, 'ab') as f:
+                        async for chunk in response.content.iter_chunked(1024):
+                            await f.write(chunk)
+                            pbar.update(len(chunk))
+            elif response.status == 416:
+                print(f"服务器返回范围不符合要求: {ts_url}, 状态码: {response.status}")
+                if os.path.exists(ts_filepath):
+                    os.remove(ts_filepath)
+                    print(f"已删除出错的文件: {ts_filepath}")
+                return False
+            else:
+                print(f"下载失败: {ts_url}, 状态码: {response.status}")
+                return False
+    except aiohttp.ClientError as e:
+        print(f"发生网络错误: {e}")
+        return False
+    except aiohttp.ServerDisconnectedError as e:
+        print(f"服务器断开连接: {e}")
+        return False
+    except aiohttp.ClientResponseError as e:
+        print(f"客户端响应错误: {e}")
+        return False
+    except aiohttp.ContentTypeError as e:
+        print(f"内容类型错误: {e}")
+        return False
+    except Exception as e:
+        print(f"发生未知异常: {e}")
+        return False
 
-def download_nested_m3u8(url):
-    r = requests.get(url)
-    if r.status_code != 200:
-        print(f'嵌套m3u8视频下载链接无效: {url}')
-        return []
+    return True
 
-    m3u8_list = r.text.split('\n')
+
+async def download_nested_m3u8(session, url):
+    async with session.get(url) as response:
+        if response.status != 200:
+            print(f'嵌套m3u8视频下载链接无效: {url}')
+            return []
+
+        m3u8_content = await response.text()
+
+    m3u8_list = m3u8_content.split('\n')
     m3u8_list = [i for i in m3u8_list if i and i[0] != '#']
     ts_list = [urljoin(url, line) for line in m3u8_list]
 
@@ -82,7 +114,7 @@ def convert_ts_to_mp4(ts_dir, mp4_file_path):
         print(f"目录 {ts_dir} 中没有找到TS文件.")
         return False
 
-    ts_files.sort()  # 确保文件按顺序合并
+    ts_files.sort()
 
     with open(mp4_file_path, 'wb') as mp4_file:
         for ts_file in ts_files:
@@ -93,10 +125,18 @@ def convert_ts_to_mp4(ts_dir, mp4_file_path):
     print(f"TS文件合并完成，输出到: {mp4_file_path}")
     return True
 
-if __name__ == '__main__':
+async def main():
     url = 'https://v9.dious.cc/20231011/gSsDaQr1/index.m3u8'
     ts_output_dir = '/Users/duanqs/Downloads/m3u8/ts_files'
     mp4_file_path = '/Users/duanqs/Downloads/m3u8/video.mp4'
 
-    download_m3u8_video(url, ts_output_dir)
-    convert_ts_to_mp4(ts_output_dir, mp4_file_path)
+    if await download_m3u8_video(url, ts_output_dir):
+        if convert_ts_to_mp4(ts_output_dir, mp4_file_path):
+            print("MP4转换完成")
+        else:
+            print("转换到MP4失败，因为TS文件下载错误")
+    else:
+        print("下载m3u8视频失败")
+
+if __name__ == '__main__':
+    asyncio.run(main())
