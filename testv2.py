@@ -5,6 +5,10 @@ import aiofiles
 import aiohttp
 from tqdm import tqdm
 import subprocess
+import time
+
+# 设置显示模式变量
+progress_display_mode = 1  # 0: 显示单个文件的进度条, 1: 显示整体进度条和每秒下载的数据量
 
 async def download_m3u8_video(url, output_dir):
     if not os.path.exists(output_dir):
@@ -41,22 +45,30 @@ async def download_m3u8_recursive(session, url, output_dir):
             ts_list.append(ts_url)
 
     print(f"解析到 {len(ts_list)} 个ts文件,准备下载.")
-    ts_list=["https://v9.dious.cc/20231011/gSsDaQr1/2000kb/hls/MbDwKFz6.ts"]
-    # 下载并行度优化
-    download_tasks = [download_ts_segment(session, ts_url, output_dir) for ts_url in ts_list]
+
+    progress_bar = None
+    if progress_display_mode == 1:
+        progress_bar = tqdm(total=len(ts_list), unit='file', desc='Downloading', ncols=100)
+
+    download_tasks = [download_ts_segment(session, ts_url, output_dir, progress_bar) for ts_url in ts_list]
     download_results = await asyncio.gather(*download_tasks)
+
+    if progress_bar:
+        progress_bar.close()
 
     download_success = all(download_results)
     return download_success, ts_list
 
-async def download_ts_segment(session, ts_url, output_dir):
+async def download_ts_segment(session, ts_url, output_dir, progress_bar=None):
     ts_filename = os.path.basename(ts_url)
     ts_filepath = os.path.join(output_dir, ts_filename)
 
     resume_header = {}
     if os.path.exists(ts_filepath):
-        print(f"正在继续下载断点文件: {ts_filename}")
         resume_header['Range'] = f"bytes={os.path.getsize(ts_filepath)}-"
+        if progress_display_mode == 1 and progress_bar:
+            progress_bar.update(1)
+        return True  # Skip downloading if the file already exists
 
     try:
         async with session.get(ts_url, headers=resume_header) as response:
@@ -65,14 +77,30 @@ async def download_ts_segment(session, ts_url, output_dir):
 
             if response.status == 200 or response.status == 206:
                 total_size = int(response.headers.get('Content-Length', 0))
-                #print(f"服务器返回状态码: {response.status}")
-                #print(f"服务器返回Content-Length: {total_size}")
 
-                with tqdm(total=total_size, unit='B', unit_scale=True, desc=f'Downloading {ts_filename}') as pbar:
-                    async with aiofiles.open(ts_filepath, 'ab') as f:
-                        async for chunk in response.content.iter_chunked(1024):
-                            await f.write(chunk)
+                if progress_display_mode == 0:
+                    pbar = tqdm(total=total_size, unit='B', unit_scale=True, desc=f'Downloading {ts_filename}')
+
+                async with aiofiles.open(ts_filepath, 'ab') as f:
+                    start_time = time.time()
+                    total_downloaded = 0
+                    async for chunk in response.content.iter_chunked(1024):
+                        await f.write(chunk)
+                        total_downloaded += len(chunk)
+                        if progress_display_mode == 0:
                             pbar.update(len(chunk))
+
+                    elapsed_time = time.time() - start_time
+                    if progress_display_mode == 1 and progress_bar:
+                        speed = total_downloaded / elapsed_time / (1024 * 1024)  # MB/s
+                        bandwidth = speed * 8  # Mbps
+                        progress_bar.set_postfix(speed=f'{speed:.2f} MB/s', bandwidth=f'{bandwidth:.2f} Mbps')
+
+                if progress_display_mode == 0:
+                    pbar.close()
+                if progress_display_mode == 1 and progress_bar:
+                    progress_bar.update(1)
+
             elif response.status == 416:
                 local_file_size = os.path.getsize(ts_filepath)
                 #print(f"本地文件大小: {local_file_size}")
@@ -112,7 +140,6 @@ async def download_ts_segment(session, ts_url, output_dir):
 
     return True
 
-
 async def download_nested_m3u8(session, url):
     async with session.get(url) as response:
         if response.status != 200:
@@ -133,13 +160,12 @@ async def convert_ts_to_mp4(ts_dir, mp4_file_path, ts_list):
         return False
 
     # 构建 FFmpeg 命令
-    # 构建 FFmpeg 命令
     ffmpeg_cmd = [
         'ffmpeg', '-loglevel', 'error',  # Suppress logs
         '-i', 'concat:' + '|'.join([os.path.join(ts_dir, os.path.basename(ts_url)) for ts_url in ts_list]),
         '-c', 'copy', mp4_file_path
     ]
-    
+
     try:
         # 执行 FFmpeg 命令
         subprocess.run(ffmpeg_cmd, check=True)
