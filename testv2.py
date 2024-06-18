@@ -39,7 +39,7 @@ async def download_m3u8_recursive(session, url, output_dir):
             ts_list.append(ts_url)
 
     print(f"解析到 {len(ts_list)} 个ts文件,准备下载.")
-
+    #ts_list=["https://v9.dious.cc/20231011/gSsDaQr1/2000kb/hls/MbDwKFz6.ts"]
     # 下载并行度优化
     download_tasks = [download_ts_segment(session, ts_url, output_dir) for ts_url in ts_list]
     download_results = await asyncio.gather(*download_tasks)
@@ -59,19 +59,38 @@ async def download_ts_segment(session, ts_url, output_dir):
 
     try:
         async with session.get(ts_url, headers=resume_header) as response:
+            #print(f"请求URL: {ts_url}")
+            #print(f"请求头部Range: {resume_header.get('Range')}")
+
             if response.status == 200 or response.status == 206:
                 total_size = int(response.headers.get('Content-Length', 0))
+                #print(f"服务器返回状态码: {response.status}")
+                #print(f"服务器返回Content-Length: {total_size}")
+
                 with tqdm(total=total_size, unit='B', unit_scale=True, desc=f'Downloading {ts_filename}') as pbar:
                     async with aiofiles.open(ts_filepath, 'ab') as f:
                         async for chunk in response.content.iter_chunked(1024):
                             await f.write(chunk)
                             pbar.update(len(chunk))
             elif response.status == 416:
-                print(f"服务器返回范围不符合要求: {ts_url}, 状态码: {response.status}")
-                if os.path.exists(ts_filepath):
-                    os.remove(ts_filepath)
-                    print(f"已删除出错的文件: {ts_filepath}")
-                return False
+                # Check if the local file size matches the expected Content-Length
+                local_file_size = os.path.getsize(ts_filepath)
+                #print(f"本地文件大小: {local_file_size}")
+                expected_size = int(response.headers.get('Content-Length', 0))
+                #if expected_size==206:
+                #    content206 = await response.text()
+                #    print(f"部分内容为:\n{content206}")
+                
+                #print(f"服务器返回Content-Length: {expected_size}")
+                if local_file_size < expected_size:
+                    #print(f"服务器返回范围不符合要求: {ts_url}, 状态码: {response.status}")
+                    if os.path.exists(ts_filepath):
+                        os.remove(ts_filepath)
+                        #print(f"已删除出错的文件: {ts_filepath}")
+                    return False
+                else:
+                    #print(f"下载成功: {ts_url}, 状态码: {response.status}")
+                    return True
             else:
                 print(f"下载失败: {ts_url}, 状态码: {response.status}")
                 return False
